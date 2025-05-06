@@ -73,4 +73,7 @@
 		<PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="9.4.0-preview.1.25207.5" />
 		<PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
 	</ItemGroup>
+	<ItemGroup>
+	  <ProjectReference Include="..\..\..\sipsorcery\src\SIPSorcery.csproj" />
+	</ItemGroup>
 </Project>

@@ -1,12 +1,24 @@
 ﻿using System.Net.WebSockets;
+using Betalgo.Ranul.OpenAI.Interfaces;
 using Betalgo.Ranul.OpenAI.Managers;
 using Betalgo.Ranul.OpenAI.ObjectModels.RealtimeModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SIPSorcery.Net;
 
 namespace Betalgo.Ranul.OpenAI.Builders;
+
+/// <summary>
+/// Transport options to the OpenAI real-time end point.
+/// </summary>
+public enum OpenAIRealtimeTransport
+{
+    WebSocket,
+    WebRTC
+}
+
 
 /// <summary>
 /// Builder class for configuring and creating OpenAI Realtime WebSocket services.
@@ -20,8 +32,10 @@ public class OpenAIRealtimeServiceBuilder
     private readonly IServiceCollection? _services;
     private Action<ClientWebSocketOptions>? _configureOptions;
     private Action<ClientWebSocket>? _configureWebSocket;
+    private Action<RTCConfiguration>? _configureWebRTC;
     private ILogger<OpenAIRealtimeService>? _logger;
     private ServiceLifetime _serviceLifetime = ServiceLifetime.Singleton;
+    private OpenAIRealtimeTransport _transport = OpenAIRealtimeTransport.WebSocket;
 
     /// <summary>
     /// Initializes a new instance of the OpenAIRealtimeServiceBuilder with an API key.
@@ -51,6 +65,25 @@ public class OpenAIRealtimeServiceBuilder
     {
         _services = services;
         _serviceLifetime = lifetime;
+    }
+
+    /// <summary>
+    /// Switch to WebRTC‐based transport instead of WebSocket.
+    /// </summary>
+    public OpenAIRealtimeServiceBuilder UseWebRtc(Action<RTCConfiguration>? configure = null)
+    {
+        _transport = OpenAIRealtimeTransport.WebRTC;
+        _configureWebRTC = configure;
+        return this;
+    }
+
+    /// <summary>
+    /// Keep existing WebSocket transport (default).
+    /// </summary>
+    public OpenAIRealtimeServiceBuilder UseWebSocket()
+    {
+        _transport = OpenAIRealtimeTransport.WebSocket;
+        return this;
     }
 
     /// <summary>
@@ -142,52 +175,88 @@ public class OpenAIRealtimeServiceBuilder
         if (_services == null)
         {
             // Standalone configuration
-            var client = new OpenAIWebSocketClient();
-            ConfigureClient(client);
-            return new OpenAIRealtimeService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, client);
+            switch (_transport)
+            {
+                case OpenAIRealtimeTransport.WebRTC:
+                    var webrtcPeer = new OpenAIWebRTCPeer();
+                    //_configureWebRTC?.Invoke(webrtc.Options);
+                    return new OpenAIRealtimeWebRTCService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, webrtcPeer);
+
+                case OpenAIRealtimeTransport.WebSocket:
+                default:
+                    var wsClient = new OpenAIWebSocketClient();
+                    ConfigureWebSocketClient(wsClient);
+                    return new OpenAIRealtimeWebSocketService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, wsClient);
+            }
         }
         else
         {
-            switch (_serviceLifetime)
+            // With DI
+            switch (_transport)
             {
-                case ServiceLifetime.Singleton:
-                    _services.AddSingleton(sp =>
-                    {
-                        var client = new OpenAIWebSocketClient();
-                        ConfigureClient(client);
-                        return client;
-                    });
-                    _services.AddSingleton<IOpenAIRealtimeService, OpenAIRealtimeService>();
+                case OpenAIRealtimeTransport.WebRTC:
+                    // register a singleton/factory for the WebRTC client
+                    Register<OpenAIRealtimeWebRTCService, OpenAIWebRTCPeer>(ConfigureWebRTCPeer);
                     break;
-                case ServiceLifetime.Scoped:
-                    _services.AddScoped(sp =>
-                    {
-                        var client = new OpenAIWebSocketClient();
-                        ConfigureClient(client);
-                        return client;
-                    });
-                    _services.AddScoped<IOpenAIRealtimeService, OpenAIRealtimeService>();
-                    break;
-                case ServiceLifetime.Transient:
-                    _services.AddTransient(sp =>
-                    {
-                        var client = new OpenAIWebSocketClient();
-                        ConfigureClient(client);
-                        return client;
-                    });
-                    _services.AddTransient<IOpenAIRealtimeService, OpenAIRealtimeService>();
-                    break;
+
+                case OpenAIRealtimeTransport.WebSocket:
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    Register<OpenAIRealtimeWebSocketService, OpenAIWebSocketClient>(ConfigureWebSocketClient, _configureOptions, _headers);
+                    break;
             }
         }
 
         return null;
     }
 
-    private void ConfigureClient(OpenAIWebSocketClient client)
+    private void Register<TService, TClient>(
+        Action<TClient>? configureTransport = null,
+        Action<ClientWebSocketOptions>? configureOptions = null,
+        IReadOnlyDictionary<string, string>? headers = null
+    )
+        where TService : class, IOpenAIRealtimeService
+        where TClient : class
+    {
+        switch (_serviceLifetime)
+        {
+            case ServiceLifetime.Singleton:
+                _services.AddSingleton(sp =>
+                {
+                    var transport = ActivatorUtilities.CreateInstance<TClient>(sp, _options);
+                    configureTransport?.Invoke(transport);
+                    return transport;
+                });
+                _services.AddSingleton<IOpenAIRealtimeService, TService>();
+                break;
+            case ServiceLifetime.Scoped:
+                _services.AddScoped<TClient>(sp =>
+                {
+                    var transport = ActivatorUtilities.CreateInstance<TClient>(sp, _options);
+                    configureTransport?.Invoke(transport);
+                    return transport;
+                });
+                _services.AddScoped<IOpenAIRealtimeService, TService>();
+                break;
+            case ServiceLifetime.Transient:
+                _services.AddTransient<TClient>(sp =>
+                {
+                    var transport = ActivatorUtilities.CreateInstance<TClient>(sp, _options);
+                    configureTransport?.Invoke(transport);
+                    return transport;
+                });
+                _services.AddTransient<IOpenAIRealtimeService, TService>();
+                break;
+        }
+    }
+
+    private void ConfigureWebSocketClient(OpenAIWebSocketClient client)
     {
         client.ConfigureWebSocket(ws => WebSocketConfigurationHelper.ConfigureWebSocket(ws, _configureOptions, _headers, _configureWebSocket));
+    }
+
+    private void ConfigureWebRTCPeer(OpenAIWebRTCPeer peer)
+    {
+        peer.ConfigureWebRTCConnection(pc => { });
     }
 }
 

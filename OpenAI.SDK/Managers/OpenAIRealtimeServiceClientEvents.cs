@@ -6,7 +6,7 @@ public partial class OpenAIRealtimeService
 {
     public IOpenAIRealtimeServiceClientEvents ClientEvents => _clientEvents;
 
-    private class ClientEventsImplementation(OpenAIRealtimeService client) : IOpenAIRealtimeServiceClientEvents
+    protected class ClientEventsImplementation(OpenAIRealtimeService client) : IOpenAIRealtimeServiceClientEvents
     {
         private readonly ConversationImplementation _conversation = new(client);
         private readonly InputAudioBufferImplementation _inputAudioBuffer = new(client);
