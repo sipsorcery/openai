@@ -35,7 +35,6 @@ public class OpenAIRealtimeServiceBuilder
     private Action<RTCConfiguration>? _configureWebRTC;
     private ILogger<OpenAIRealtimeService>? _logger;
     private ServiceLifetime _serviceLifetime = ServiceLifetime.Singleton;
-    private OpenAIRealtimeTransport _transport = OpenAIRealtimeTransport.WebSocket;
 
     /// <summary>
     /// Initializes a new instance of the OpenAIRealtimeServiceBuilder with an API key.
@@ -65,25 +64,6 @@ public class OpenAIRealtimeServiceBuilder
     {
         _services = services;
         _serviceLifetime = lifetime;
-    }
-
-    /// <summary>
-    /// Switch to WebRTC‐based transport instead of WebSocket.
-    /// </summary>
-    public OpenAIRealtimeServiceBuilder UseWebRtc(Action<RTCConfiguration>? configure = null)
-    {
-        _transport = OpenAIRealtimeTransport.WebRTC;
-        _configureWebRTC = configure;
-        return this;
-    }
-
-    /// <summary>
-    /// Keep existing WebSocket transport (default).
-    /// </summary>
-    public OpenAIRealtimeServiceBuilder UseWebSocket()
-    {
-        _transport = OpenAIRealtimeTransport.WebSocket;
-        return this;
     }
 
     /// <summary>
@@ -163,7 +143,7 @@ public class OpenAIRealtimeServiceBuilder
 
     /// <summary>
     /// Builds and returns an instance of IOpenAIRealtimeService.
-    /// When used with dependency injection, registers the service with the specified lifetime
+    /// When used with dependency injection, registers the services with the specified lifetime
     /// and returns null. When used standalone, returns the configured service instance.
     /// </summary>
     /// <returns>
@@ -175,35 +155,19 @@ public class OpenAIRealtimeServiceBuilder
         if (_services == null)
         {
             // Standalone configuration
-            switch (_transport)
-            {
-                case OpenAIRealtimeTransport.WebRTC:
-                    var webrtcPeer = new OpenAIWebRTCPeer();
-                    //_configureWebRTC?.Invoke(webrtc.Options);
-                    return new OpenAIRealtimeWebRTCService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, webrtcPeer);
+            //var webrtcPeer = new OpenAIWebRTCPeer();
+            ////_configureWebRTC?.Invoke(webrtc.Options);
+            //return new OpenAIRealtimeWebRTCService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, webrtcPeer);
 
-                case OpenAIRealtimeTransport.WebSocket:
-                default:
-                    var wsClient = new OpenAIWebSocketClient();
-                    ConfigureWebSocketClient(wsClient);
-                    return new OpenAIRealtimeWebSocketService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, wsClient);
-            }
+            var wsClient = new OpenAIWebSocketClient();
+            ConfigureWebSocketClient(wsClient);
+            return new OpenAIRealtimeWebSocketService(Options.Create(_options), _logger ?? NullLogger<OpenAIRealtimeService>.Instance, wsClient);
         }
         else
         {
-            // With DI
-            switch (_transport)
-            {
-                case OpenAIRealtimeTransport.WebRTC:
-                    // register a singleton/factory for the WebRTC client
-                    Register<OpenAIRealtimeWebRTCService, OpenAIWebRTCPeer>(ConfigureWebRTCPeer);
-                    break;
-
-                case OpenAIRealtimeTransport.WebSocket:
-                default:
-                    Register<OpenAIRealtimeWebSocketService, OpenAIWebSocketClient>(ConfigureWebSocketClient, _configureOptions, _headers);
-                    break;
-            }
+            // With DI, register all available transports.
+            Register<OpenAIRealtimeWebSocketService, OpenAIWebSocketClient>(ConfigureWebSocketClient, _configureOptions, _headers);
+            Register<OpenAIRealtimeWebRTCService, OpenAIWebRTCPeer>(ConfigureWebRTCPeer);      
         }
 
         return null;
